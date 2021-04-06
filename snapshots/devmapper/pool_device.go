@@ -18,11 +18,43 @@
 
 package devmapper
 
+/*
+#cgo LDFLAGS: -L. -ldevmapper
+#include <libdevmapper.h>
+#include <linux/loop.h> // FIXME: present only for defines, maybe we can remove it?
+#include <linux/fs.h>   // FIXME: present only for BLKGETSIZE64, maybe we can remove it?
+#ifndef LOOP_CTL_GET_FREE
+  #define LOOP_CTL_GET_FREE 0x4C82
+#endif
+#ifndef LO_FLAGS_PARTSCAN
+  #define LO_FLAGS_PARTSCAN 8
+#endif
+// FIXME: Can't we find a way to do the logging in pure Go?
+extern void DevmapperLogCallback(int level, char *file, int line, int dm_errno_or_class, char *str);
+static void	log_cb(int level, const char *file, int line, int dm_errno_or_class, const char *f, ...)
+{
+  char buffer[256];
+  va_list ap;
+  va_start(ap, f);
+  vsnprintf(buffer, 256, f, ap);
+  va_end(ap);
+  DevmapperLogCallback(level, (char *)file, line, dm_errno_or_class, buffer);
+}
+static void	log_with_errno_init()
+{
+  dm_log_with_errno_init(log_cb);
+}
+*/
+import "C"
+
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
@@ -511,6 +543,15 @@ func (p *PoolDevice) deleteDevice(ctx context.Context, info *DeviceInfo) error {
 			if e != nil && !errors.Is(e, unix.ENODATA) {
 				return e
 			}
+			var r [2]uint64
+			r[0] = 0
+			r[1] = info.Size
+			f, e := os.OpenFile(dmsetup.GetFullDevicePath(info.Name), os.O_RDWR, 0)
+			if e != nil {
+				return e
+			}
+			syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), C.BLKDISCARD, uintptr(unsafe.Pointer(&r[0])))
+
 			return nil
 		})
 	}); err != nil {
